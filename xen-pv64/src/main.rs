@@ -3,20 +3,60 @@
 
 core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
 
-/* Xen writes hypercall stubs here (one 32-byte stub per hypercall number) */
 #[repr(align(4096))]
 struct Page([u8; 4096]);
 
 #[unsafe(no_mangle)]
 static mut hypercall_page: Page = Page([0; 4096]);
 
-/* One page of stack for early boot */
 #[unsafe(no_mangle)]
 static mut boot_stack: [u8; 4096] = [0; 4096];
 
-/* start_info pointer saved by the entry point */
 #[unsafe(no_mangle)]
 static mut pv_start_info: u64 = 0;
+
+/*
+ * x86_64 PV start_info: must match Xen ABI exactly.
+ * The C compiler inserts 4-byte padding before each u64 field that follows
+ * a u32 (_pad1 before store_mfn, _pad2 before the console union).
+ */
+#[repr(C)]
+struct StartInfo {
+    magic: [u8; 32],
+    nr_pages: u64,
+    shared_info: u64,
+    flags: u32,
+    _pad1: u32,
+    store_mfn: u64,
+    store_evtchn: u32,
+    _pad2: u32,
+    console_mfn: u64,    /* offset 72 */
+    console_evtchn: u32, /* offset 80 */
+}
+
+/* xencons_interface: in[1024], out[2048], then producer/consumer indices */
+#[repr(C)]
+struct XenConsInterface {
+    in_buf: [u8; 1024],
+    out_buf: [u8; 2048],
+    in_cons: u32,
+    in_prod: u32,
+    out_cons: u32,
+    out_prod: u32,
+}
+
+/*
+ * Placeholder page in BSS that we remap to the console MFN.
+ * mfn_to_virt (mfn * 4096) does NOT work on XCP-ng because MFNs are
+ * in the ~16GB range: far outside our guest's page tables.
+ * Instead we use HYPERVISOR_update_va_mapping to map the console page
+ * over this page, which Xen has already given us a valid mapping for.
+ */
+#[repr(align(4096))]
+struct ConsPage([u8; 4096]);
+
+static mut CONSOLE_RING: ConsPage = ConsPage([0; 4096]);
+static mut CONSOLE_EVTCHN: u32 = 0;
 
 fn console_write(s: &str) {
     let ptr = s.as_ptr();
@@ -24,14 +64,82 @@ fn console_write(s: &str) {
     unsafe {
         core::arch::asm!(
             "call hypercall_page + {offset}",
-            offset = const (18 * 32),  /* __HYPERVISOR_console_io * 32 */
+            offset = const (18 * 32),  /* __HYPERVISOR_console_io */
             in("rdi") 0usize,          /* CONSOLEIO_write */
             in("rsi") len,
             in("rdx") ptr,
             lateout("rax") _,
-            out("rcx") _,              /* clobbered by syscall inside stub */
+            out("rcx") _,
             out("r11") _,
             options(nostack),
+        );
+    }
+}
+
+/*
+ * Map the console MFN over CONSOLE_RING so we can access it.
+ * Must be called once before pv_console_write.
+ *
+ * HYPERVISOR_update_va_mapping(linear_addr, pte, UVMF_INVLPG)
+ *   rdi = virtual address of the page to remap (our placeholder)
+ *   rsi = new PTE: (mfn << 12) | Present | RW
+ *   rdx = UVMF_INVLPG (2): invalidate this single TLB entry
+ */
+fn init_pv_console() {
+    let si = unsafe { pv_start_info as *const StartInfo };
+    let mfn = unsafe { (*si).console_mfn };
+    let port = unsafe { (*si).console_evtchn };
+
+    unsafe {
+        CONSOLE_EVTCHN = port;
+    }
+
+    let virt = unsafe { &raw const CONSOLE_RING as *const _ as usize };
+    let pte: usize = ((mfn as usize) << 12) | 0x3; /* P | RW */
+
+    unsafe {
+        core::arch::asm!(
+            "call hypercall_page + {offset}",
+            offset = const (14 * 32),  /* __HYPERVISOR_update_va_mapping */
+            in("rdi") virt,
+            in("rsi") pte,
+            in("rdx") 2usize,          /* UVMF_INVLPG */
+            lateout("rax") _,
+            out("rcx") _,
+            out("r11") _,
+        );
+    }
+}
+
+fn pv_console_write(s: &str) {
+    let cons = unsafe { &raw mut CONSOLE_RING as *mut _ as *mut XenConsInterface };
+    let port = unsafe { CONSOLE_EVTCHN };
+
+    for &byte in s.as_bytes() {
+        loop {
+            let prod = unsafe { core::ptr::read_volatile(&(*cons).out_prod) };
+            let cons_idx = unsafe { core::ptr::read_volatile(&(*cons).out_cons) };
+            if prod.wrapping_sub(cons_idx) < 2048 {
+                let idx = (prod as usize) & (2048 - 1);
+                unsafe { core::ptr::write_volatile(&mut (*cons).out_buf[idx], byte) };
+                core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+                unsafe { core::ptr::write_volatile(&mut (*cons).out_prod, prod.wrapping_add(1)) };
+                break;
+            }
+            core::hint::spin_loop();
+        }
+    }
+
+    /* Notify xenconsoled */
+    unsafe {
+        core::arch::asm!(
+            "call hypercall_page + {offset}",
+            offset = const (32 * 32),  /* __HYPERVISOR_event_channel_op */
+            in("rdi") 4usize,          /* EVTCHNOP_send */
+            in("rsi") &port as *const u32 as usize,
+            lateout("rax") _,
+            out("rcx") _,
+            out("r11") _,
         );
     }
 }
@@ -41,20 +149,22 @@ fn shutdown() -> ! {
     unsafe {
         core::arch::asm!(
             "call hypercall_page + {offset}",
-            offset = const (29 * 32),   /* __HYPERVISOR_sched_op * 32 */
-            in("rdi") 2usize,           /* SCHEDOP_shutdown */
+            offset = const (29 * 32),  /* __HYPERVISOR_sched_op */
+            in("rdi") 2usize,          /* SCHEDOP_shutdown */
             in("rsi") &reason as *const u32 as usize,
             lateout("rax") _,
             out("rcx") _,
             out("r11") _,
         );
     }
-    loop {} /* should never reach here */
+    loop {}
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    console_write("Hello from Rust!\n");
+    console_write("Hello via HYPERVISOR_console_io\n");
+    init_pv_console();
+    pv_console_write("Hello via PV console!\n");
     shutdown();
 }
 
