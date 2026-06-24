@@ -66,3 +66,23 @@ Displaying notes found in: .note
   Xen                  0x00000004       Unknown note type: (0x00000009)
    description data: 79 65 73 00
 ```
+
+
+## Print hello
+- `HYPERVISOR_console_io`: print "Hello"
+- Xen filled the `hypercall_page` with 256 stubs. Each stub is 32 bytes: it moves the
+hypercall number into `eax` and executes `syscall`. To invoke hypercall N we need
+to do: `call hypercall_page + (N * 32)`
+- x86_64 hypercall ABI puts arguments in the same registers as linux syscalls:
+  - arg1: rdi
+  - arg2: rsi
+  - arg3: rdx
+  - return: rax
+  - clobbered: rcx, r11
+
+- For HYPERVISOR_console_io(CONSOLEIO_write, len, ptr):
+  - rdi = 0 (CONSOLEIO_write)
+  - rsi = byte length
+  - rdx = pointer to the string
+
+

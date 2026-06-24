@@ -18,8 +18,27 @@ static mut boot_stack: [u8; 4096] = [0; 4096];
 #[unsafe(no_mangle)]
 static mut pv_start_info: u64 = 0;
 
+fn console_write(s: &str) {
+    let ptr = s.as_ptr();
+    let len = s.len();
+    unsafe {
+        core::arch::asm!(
+            "call hypercall_page + {offset}",
+            offset = const (18 * 32),  /* __HYPERVISOR_console_io * 32 */
+            in("rdi") 0usize,          /* CONSOLEIO_write */
+            in("rsi") len,
+            in("rdx") ptr,
+            lateout("rax") _,
+            out("rcx") _,              /* clobbered by syscall inside stub */
+            out("r11") _,
+            options(nostack),
+        );
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
+    console_write("Hello from Rust!\n");
     loop {}
 }
 
