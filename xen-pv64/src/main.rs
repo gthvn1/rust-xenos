@@ -36,10 +36,26 @@ fn console_write(s: &str) {
     }
 }
 
+fn shutdown() -> ! {
+    let reason: u32 = 0; /* SHUTDOWN_poweroff */
+    unsafe {
+        core::arch::asm!(
+            "call hypercall_page + {offset}",
+            offset = const (29 * 32),   /* __HYPERVISOR_sched_op * 32 */
+            in("rdi") 2usize,           /* SCHEDOP_shutdown */
+            in("rsi") &reason as *const u32 as usize,
+            lateout("rax") _,
+            out("rcx") _,
+            out("r11") _,
+        );
+    }
+    loop {} /* should never reach here */
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
     console_write("Hello from Rust!\n");
-    loop {}
+    shutdown();
 }
 
 #[panic_handler]
