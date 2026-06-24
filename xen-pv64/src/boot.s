@@ -10,7 +10,7 @@
  */
 .section .note.Xen, "a", @note
 
-/* XEN_ELFNOTE_GUEST_OS = 6 — identify the OS, any string is fine */
+/* XEN_ELFNOTE_GUEST_OS = 6: identify the OS, any string is fine */
 .align 4
 .long 4                     /* namesz: "Xen\0" = 4 */
 .long 4                     /* descsz: "XTF\0" = 4 */
@@ -27,7 +27,7 @@
 .asciz "0"
 .align 4                    /* pad descsz 2 -> 4 */
 
-/* XEN_ELFNOTE_LOADER = 8 — must be "generic" for PV */
+/* XEN_ELFNOTE_LOADER = 8: must be "generic" for PV */
 .align 4
 .long 4                     /* namesz */
 .long 8                     /* descsz: "generic\0" = 8 */
@@ -35,7 +35,7 @@
 .asciz "Xen"
 .asciz "generic"
 
-/* XEN_ELFNOTE_HYPERCALL_PAGE = 2 — address Xen will fill with stubs */
+/* XEN_ELFNOTE_HYPERCALL_PAGE = 2: address Xen will fill with stubs */
 .align 4
 .long 4                     /* namesz */
 .long 8                     /* descsz: 64-bit address */
@@ -43,7 +43,7 @@
 .asciz "Xen"
 .quad hypercall_page
 
-/* XEN_ELFNOTE_XEN_VERSION = 5 — must be exactly "xen-3.0" */
+/* XEN_ELFNOTE_XEN_VERSION = 5: must be exactly "xen-3.0" */
 .align 4
 .long 4                     /* namesz */
 .long 8                     /* descsz: "xen-3.0\0" = 8 */
@@ -51,7 +51,7 @@
 .asciz "Xen"
 .asciz "xen-3.0"
 
-/* XEN_ELFNOTE_FEATURES = 10 — require non-writable page tables (PV safety) */
+/* XEN_ELFNOTE_FEATURES = 10: require non-writable page tables (PV safety) */
 .align 4
 .long 4                     /* namesz */
 .long 42                    /* descsz: 41 chars + null = 42 */
@@ -73,7 +73,7 @@
  * PV64 entry point.
  * Xen jumps here in 64-bit mode with:
  *   %rsi = pointer to start_info struct
- * Stack is not set up yet — we must do it ourselves.
+ * Stack is not set up yet: we must do it ourselves.
  */
 .section .text.head, "ax", @progbits
 .global _elf_start

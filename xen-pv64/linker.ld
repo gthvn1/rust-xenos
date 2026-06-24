@@ -4,8 +4,8 @@ ENTRY(_elf_start)
 
 PHDRS
 {
-    text PT_LOAD FLAGS(7);  /* RWX — single load segment for simplicity */
-    note PT_NOTE FLAGS(4);  /* R   — Xen reads ELF notes from here     */
+    text PT_LOAD FLAGS(7);  /* RWX: single load segment for simplicity */
+    note PT_NOTE FLAGS(4);  /* R  : Xen reads ELF notes from here     */
 }
 
 SECTIONS
