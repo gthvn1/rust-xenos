@@ -3,6 +3,7 @@
 
 core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
 
+#[allow(dead_code)]
 #[repr(align(4096))]
 struct Page([u8; 4096]);
 
@@ -54,27 +55,59 @@ struct XenConsInterface {
 // Instead we use HYPERVISOR_update_va_mapping to map the console page
 // over this page, which Xen has already given us a valid mapping for.
 
+#[allow(dead_code)]
 #[repr(align(4096))]
 struct ConsPage([u8; 4096]);
 
 static mut CONSOLE_RING: ConsPage = ConsPage([0; 4096]);
 static mut CONSOLE_EVTCHN: u32 = 0;
 
+#[repr(usize)]
+enum Hypercall {
+    UpdateVaMapping = 14,
+    ConsoleIo = 18,
+    SchedOp = 29,
+    EventChannelOp = 32,
+}
+
+unsafe fn hypercall2<const N: usize>(rdi: usize, rsi: usize) -> usize {
+    let ret: usize;
+    unsafe {
+        core::arch::asm!(
+            "call hypercall_page + {offset}",
+            offset = const (N * 32),
+            in("rdi") rdi,
+            in("rsi") rsi,
+            lateout("rax") ret,
+            out("rcx") _,
+            out("r11") _,
+        );
+    }
+    ret
+}
+
+unsafe fn hypercall3<const N: usize>(rdi: usize, rsi: usize, rdx: usize) -> usize {
+    let ret: usize;
+    unsafe {
+        core::arch::asm!(
+            "call hypercall_page + {offset}",
+            offset = const (N * 32),
+            in("rdi") rdi,
+            in("rsi") rsi,
+            in("rdx") rdx,
+            lateout("rax") ret,
+            out("rcx") _,
+            out("r11") _,
+        );
+    }
+    ret
+}
+
 fn console_write(s: &str) {
     let ptr = s.as_ptr();
     let len = s.len();
     unsafe {
-        core::arch::asm!(
-            "call hypercall_page + {offset}",
-            offset = const (18 * 32),  // __HYPERVISOR_console_io
-            in("rdi") 0usize,          // CONSOLEIO_write
-            in("rsi") len,
-            in("rdx") ptr,
-            lateout("rax") _,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack), // tell the compiler we don't touch the stack
-        );
+        hypercall3::<{ Hypercall::ConsoleIo as usize }>(0, len, ptr as usize);
     }
 }
 
@@ -88,28 +121,19 @@ fn console_write(s: &str) {
 fn init_pv_console() {
     let si = unsafe { pv_start_info as *const StartInfo };
     let mfn = unsafe { (*si).console_mfn };
-    let port = unsafe { (*si).console_evtchn };
 
     unsafe {
-        CONSOLE_EVTCHN = port;
+        CONSOLE_EVTCHN = (*si).console_evtchn;
     }
 
     // Page is 4096 bytes, so mfn << 12 gives the physical address
     // As we are PV guest machine and physical address are the same.
     let virt = &raw const CONSOLE_RING as *const _ as usize;
     let pte: usize = ((mfn as usize) << 12) | 0x3; /* P | RW */
+    let uvmf_invlpg: usize = 2; // use UVMF_INVLPG to tell Xen to flush TLB
 
     unsafe {
-        core::arch::asm!(
-            "call hypercall_page + {offset}",
-            offset = const (14 * 32),  // __HYPERVISOR_update_va_mapping
-            in("rdi") virt,
-            in("rsi") pte,
-            in("rdx") 2usize, // UVMF_INVLPG to tell Xen to flush TLB
-            lateout("rax") _,
-            out("rcx") _,
-            out("r11") _,
-        );
+        hypercall3::<{ Hypercall::UpdateVaMapping as usize }>(virt, pte, uvmf_invlpg);
     }
 }
 
@@ -165,33 +189,27 @@ fn pv_console_write(s: &str) {
     }
 
     // Notify xenconsoled
+    let evtchnop_send: usize = 4;
     unsafe {
-        core::arch::asm!(
-            "call hypercall_page + {offset}",
-            offset = const (32 * 32),  // __HYPERVISOR_event_channel_op
-            in("rdi") 4usize,          // EVTCHNOP_send
-            in("rsi") &port as *const u32 as usize,
-            lateout("rax") _,
-            out("rcx") _,
-            out("r11") _,
+        hypercall2::<{ Hypercall::EventChannelOp as usize }>(
+            evtchnop_send,
+            &port as *const u32 as usize,
         );
     }
 }
 
+#[allow(clippy::empty_loop)]
 fn shutdown() -> ! {
     let reason: u32 = 0; // SHUTDOWN_poweroff
+    let schedop_shutdown: usize = 2;
     unsafe {
-        core::arch::asm!(
-            "call hypercall_page + {offset}",
-            offset = const (29 * 32),  // __HYPERVISOR_sched_op
-            in("rdi") 2usize,          // SCHEDOP_shutdown
-            in("rsi") &reason as *const u32 as usize,
-            lateout("rax") _,
-            out("rcx") _,
-            out("r11") _,
+        hypercall2::<{ Hypercall::SchedOp as usize }>(
+            schedop_shutdown,
+            &reason as *const u32 as usize,
         );
     }
-    unreachable!()
+    // unreachable
+    loop {}
 }
 
 #[unsafe(no_mangle)]
