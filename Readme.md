@@ -1,4 +1,4 @@
-- We are writing XenRT in Rust for learning purpose.
+- We are writing a Xen PV64 guest in Rust for learning purposes.
   - We are considering PV64 only
 - https://xenbits.xen.org/docs/xtf/index.html
 
@@ -6,11 +6,11 @@
 
 - When Xen loads the ELF it reads a `.note.Xen` section to understand what kind of guest
   this is. For PV64 we will need 7 notes.
-- Then it jumps to _elf_start with `%rsi =` pointer to a `start_info` struct.
+- Then it jumps to `_elf_start` with `%rsi =` pointer to a `start_info` struct.
 
 ### ELF note format
 
-- Each note in `.note` section has this layout:
+- Each note in the `.note` section has this layout:
 ```
 [namesz: u32]
 [descsz: u32]
@@ -22,7 +22,7 @@
 ### Expected
 
 - `_elf_start`: Entry point, first byte of the binary
-- `kernel_main`: Our rust function entry point
+- `kernel_main`: Our Rust function entry point
 - `boot_stack`: 4K BSS
 - `hypercall_page`: 4K that Xen will fill
 - `pv_start_info`: 8 bytes after the hypercall page
@@ -70,7 +70,7 @@ Displaying notes found in: .note
 
 ## Print hello
 - `HYPERVISOR_console_io`: print "Hello"
-- Xen filled the `hypercall_page` with 256 stubs. Each stub is 32 bytes: it moves the
+- Xen filled the `hypercall_page` with 128 stubs. Each stub is 32 bytes: it moves the
 hypercall number into `eax` and executes `syscall`. To invoke hypercall N we need
 to do: `call hypercall_page + (N * 32)`
 - x86_64 hypercall ABI puts arguments in the same registers as linux syscalls:
@@ -85,4 +85,13 @@ to do: `call hypercall_page + (N * 32)`
   - rsi = byte length
   - rdx = pointer to the string
 
-
+## Run it
+- You need to copy the config file to Dom0
+- From Dom0:
+```sh
+# xl create -p xen-pv64.cfg
+Parsing config from xen-pv64.cfg
+# -> from another terminal you can open a console: xl console xen-pv64
+# xl unpause xen-pv64
+```
+- You should see the message on the console.
