@@ -196,9 +196,9 @@ fn shutdown() -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    console_write("Hello via HYPERVISOR_console_io\n");
+    console_write("Hello via HYPERVISOR_console_io\r\n");
     init_pv_console();
-    pv_console_write("Hello via PV console!\n");
+    pv_console_write("Hello via PV console!\r\n");
     shutdown();
 }
 
