@@ -9,32 +9,34 @@ struct Page([u8; 4096]);
 #[unsafe(no_mangle)]
 static mut hypercall_page: Page = Page([0; 4096]);
 
+// boot_stack doesn't need 4K alignment
 #[unsafe(no_mangle)]
 static mut boot_stack: [u8; 4096] = [0; 4096];
 
 #[unsafe(no_mangle)]
 static mut pv_start_info: u64 = 0;
 
-/*
- * x86_64 PV start_info: must match Xen ABI exactly.
- * The C compiler inserts 4-byte padding before each u64 field that follows
- * a u32 (_pad1 before store_mfn, _pad2 before the console union).
- */
+// x86_64 PV start_info: must match Xen ABI exactly.
+// The C compiler inserts 4-byte padding before each u64 field that follows
+// a u32 (_pad1 before store_mfn, _pad2 before the console union).
+//
+// See xen/include/public/xen.h
+
 #[repr(C)]
 struct StartInfo {
     magic: [u8; 32],
     nr_pages: u64,
-    shared_info: u64,
+    shared_info: u64, // Machine address of shared info struct
     flags: u32,
     _pad1: u32,
     store_mfn: u64,
     store_evtchn: u32,
     _pad2: u32,
-    console_mfn: u64,    /* offset 72 */
-    console_evtchn: u32, /* offset 80 */
+    console_mfn: u64,    // offset 72/
+    console_evtchn: u32, // offset 80
 }
 
-/* xencons_interface: in[1024], out[2048], then producer/consumer indices */
+// xencons_interface: in[1024], out[2048], then producer/consumer indices
 #[repr(C)]
 struct XenConsInterface {
     in_buf: [u8; 1024],
@@ -45,13 +47,12 @@ struct XenConsInterface {
     out_prod: u32,
 }
 
-/*
- * Placeholder page in BSS that we remap to the console MFN.
- * mfn_to_virt (mfn * 4096) does NOT work on XCP-ng because MFNs are
- * in the ~16GB range: far outside our guest's page tables.
- * Instead we use HYPERVISOR_update_va_mapping to map the console page
- * over this page, which Xen has already given us a valid mapping for.
- */
+// Placeholder page in BSS that we remap to the console MFN.
+// mfn_to_virt (mfn * 4096) does NOT work on XCP-ng because MFNs are
+// in the ~16GB range: far outside our guest's page tables.
+// Instead we use HYPERVISOR_update_va_mapping to map the console page
+// over this page, which Xen has already given us a valid mapping for.
+
 #[repr(align(4096))]
 struct ConsPage([u8; 4096]);
 
@@ -64,8 +65,8 @@ fn console_write(s: &str) {
     unsafe {
         core::arch::asm!(
             "call hypercall_page + {offset}",
-            offset = const (18 * 32),  /* __HYPERVISOR_console_io */
-            in("rdi") 0usize,          /* CONSOLEIO_write */
+            offset = const (18 * 32),  // __HYPERVISOR_console_io
+            in("rdi") 0usize,          // CONSOLEIO_write
             in("rsi") len,
             in("rdx") ptr,
             lateout("rax") _,
@@ -76,15 +77,14 @@ fn console_write(s: &str) {
     }
 }
 
-/*
- * Map the console MFN over CONSOLE_RING so we can access it.
- * Must be called once before pv_console_write.
- *
- * HYPERVISOR_update_va_mapping(linear_addr, pte, UVMF_INVLPG)
- *   rdi = virtual address of the page to remap (our placeholder)
- *   rsi = new PTE: (mfn << 12) | Present | RW
- *   rdx = UVMF_INVLPG (2): invalidate this single TLB entry
- */
+// Map the console MFN over CONSOLE_RING so we can access it.
+// Must be called once before pv_console_write.
+//
+// HYPERVISOR_update_va_mapping(linear_addr, pte, UVMF_INVLPG)
+//   rdi = virtual address of the page to remap (our placeholder)
+//   rsi = new PTE: (mfn << 12) | Present | RW
+//   rdx = UVMF_INVLPG (2): invalidate this single TLB entry
+
 fn init_pv_console() {
     let si = unsafe { pv_start_info as *const StartInfo };
     let mfn = unsafe { (*si).console_mfn };
@@ -94,16 +94,16 @@ fn init_pv_console() {
         CONSOLE_EVTCHN = port;
     }
 
-    let virt = unsafe { &raw const CONSOLE_RING as *const _ as usize };
+    let virt = &raw const CONSOLE_RING as *const _ as usize;
     let pte: usize = ((mfn as usize) << 12) | 0x3; /* P | RW */
 
     unsafe {
         core::arch::asm!(
             "call hypercall_page + {offset}",
-            offset = const (14 * 32),  /* __HYPERVISOR_update_va_mapping */
+            offset = const (14 * 32),  // __HYPERVISOR_update_va_mapping
             in("rdi") virt,
             in("rsi") pte,
-            in("rdx") 2usize,          /* UVMF_INVLPG */
+            in("rdx") 2usize,          // UVMF_INVLPG
             lateout("rax") _,
             out("rcx") _,
             out("r11") _,
@@ -112,7 +112,7 @@ fn init_pv_console() {
 }
 
 fn pv_console_write(s: &str) {
-    let cons = unsafe { &raw mut CONSOLE_RING as *mut _ as *mut XenConsInterface };
+    let cons = &raw mut CONSOLE_RING as *mut _ as *mut XenConsInterface;
     let port = unsafe { CONSOLE_EVTCHN };
 
     for &byte in s.as_bytes() {
@@ -130,12 +130,12 @@ fn pv_console_write(s: &str) {
         }
     }
 
-    /* Notify xenconsoled */
+    // Notify xenconsoled
     unsafe {
         core::arch::asm!(
             "call hypercall_page + {offset}",
-            offset = const (32 * 32),  /* __HYPERVISOR_event_channel_op */
-            in("rdi") 4usize,          /* EVTCHNOP_send */
+            offset = const (32 * 32),  // __HYPERVISOR_event_channel_op
+            in("rdi") 4usize,          // EVTCHNOP_send
             in("rsi") &port as *const u32 as usize,
             lateout("rax") _,
             out("rcx") _,
@@ -145,19 +145,19 @@ fn pv_console_write(s: &str) {
 }
 
 fn shutdown() -> ! {
-    let reason: u32 = 0; /* SHUTDOWN_poweroff */
+    let reason: u32 = 0; // SHUTDOWN_poweroff
     unsafe {
         core::arch::asm!(
             "call hypercall_page + {offset}",
-            offset = const (29 * 32),  /* __HYPERVISOR_sched_op */
-            in("rdi") 2usize,          /* SCHEDOP_shutdown */
+            offset = const (29 * 32),  // __HYPERVISOR_sched_op
+            in("rdi") 2usize,          // SCHEDOP_shutdown
             in("rsi") &reason as *const u32 as usize,
             lateout("rax") _,
             out("rcx") _,
             out("r11") _,
         );
     }
-    loop {}
+    unreachable!()
 }
 
 #[unsafe(no_mangle)]

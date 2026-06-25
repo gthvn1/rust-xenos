@@ -1,6 +1,8 @@
 /*
  * Xen PV64 ELF notes + entry point
  *
+ * xen/include/public/elfnote.h
+ *
  * ELF note layout (each field is 4 bytes unless noted):
  *   namesz  - byte length of name (including null)
  *   descsz  - byte length of desc (including null for strings)
