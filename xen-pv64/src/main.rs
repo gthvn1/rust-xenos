@@ -37,6 +37,7 @@ struct StartInfo {
 }
 
 // xencons_interface: in[1024], out[2048], then producer/consumer indices
+// See xen/include/public/io/console.h
 #[repr(C)]
 struct XenConsInterface {
     in_buf: [u8; 1024],
@@ -72,7 +73,7 @@ fn console_write(s: &str) {
             lateout("rax") _,
             out("rcx") _,
             out("r11") _,
-            options(nostack),
+            options(nostack), // tell the compiler we don't touch the stack
         );
     }
 }
@@ -84,7 +85,6 @@ fn console_write(s: &str) {
 //   rdi = virtual address of the page to remap (our placeholder)
 //   rsi = new PTE: (mfn << 12) | Present | RW
 //   rdx = UVMF_INVLPG (2): invalidate this single TLB entry
-
 fn init_pv_console() {
     let si = unsafe { pv_start_info as *const StartInfo };
     let mfn = unsafe { (*si).console_mfn };
@@ -94,6 +94,8 @@ fn init_pv_console() {
         CONSOLE_EVTCHN = port;
     }
 
+    // Page is 4096 bytes, so mfn << 12 gives the physical address
+    // As we are PV guest machine and physical address are the same.
     let virt = &raw const CONSOLE_RING as *const _ as usize;
     let pte: usize = ((mfn as usize) << 12) | 0x3; /* P | RW */
 
@@ -103,7 +105,7 @@ fn init_pv_console() {
             offset = const (14 * 32),  // __HYPERVISOR_update_va_mapping
             in("rdi") virt,
             in("rsi") pte,
-            in("rdx") 2usize,          // UVMF_INVLPG
+            in("rdx") 2usize, // UVMF_INVLPG to tell Xen to flush TLB
             lateout("rax") _,
             out("rcx") _,
             out("r11") _,
@@ -111,21 +113,53 @@ fn init_pv_console() {
     }
 }
 
+// It is xenconsoled that runs in dom0 that reads/writes console ring.
+// - xenconsoled reads out_prod
+// - xenconsoled writes out_cons
+//
+// - We write a byte in out_buf[out_prod & 2047] then increments out_prod
+// - xenconsoled reads byte at out_buf[out_cons & 2047] then increments out_cons
+//
+// Initial state: out_prod = 0, out_cons = 0 => prod == cons <=> buffer empty
+// Guest writes 'H':
+//   - read out_prod (=0)
+//   - out_buf[out_prod] = 'H'
+//   - fence
+//   - out_prod = 1
+//   -> Sends event (EVTCHNOP_send) -> wakes xenconsoled
+// Xenconsoled wakes:
+//   - out_prod(= 1) != out_cons(= 0) => something to read
+//   - reads out_buf[0] == 'H'
+//   - out_cons = 1, acknowledges
+// Guest writes 'e':
+//   - read out_prod (=1)
+//   - out_buf[out_prod] = 'e'
+//   - fence
+//   - out_prod = 2
+//   -> Sends event (EVTCHNOP_send) -> wakes xenconsoled
+// ...
+// and so on
+// the indice grow forever but we use `& (2048 -1)` to artificially wrap
+//
 fn pv_console_write(s: &str) {
-    let cons = &raw mut CONSOLE_RING as *mut _ as *mut XenConsInterface;
+    let cons = &raw mut CONSOLE_RING as *mut XenConsInterface;
     let port = unsafe { CONSOLE_EVTCHN };
 
     for &byte in s.as_bytes() {
         loop {
+            // Use volatile to not cache value in register and not reorder reads/writes
             let prod = unsafe { core::ptr::read_volatile(&(*cons).out_prod) };
             let cons_idx = unsafe { core::ptr::read_volatile(&(*cons).out_cons) };
+            // Ensure that there is space to write byte
             if prod.wrapping_sub(cons_idx) < 2048 {
                 let idx = (prod as usize) & (2048 - 1);
                 unsafe { core::ptr::write_volatile(&mut (*cons).out_buf[idx], byte) };
+                // Ensure the byte written to out_buf is visible before out_prod is incremented
                 core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
                 unsafe { core::ptr::write_volatile(&mut (*cons).out_prod, prod.wrapping_add(1)) };
                 break;
             }
+            // spin_loop() is just a hint for CPU.
             core::hint::spin_loop();
         }
     }
