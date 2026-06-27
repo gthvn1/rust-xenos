@@ -85,7 +85,26 @@ to do: `call hypercall_page + (N * 32)`
   - rsi = byte length
   - rdx = pointer to the string
 
-## Run it
+## Notes
+
+- When booting using pygrub or `kernel=` dom0 loads the binary, hands it to Xen. It requires
+PV or PVH guest (no qemu).
+- When using GRUB reading from disk, we need BIOS/UEFI, so we need QEMU. It requires PVHVM or
+HVM.
+
+- For PV:
+  - `start_info` at boot
+    - contains pointer to `shared_info`
+    - xenstore MFN and event channel
+    - event channel
+  - hypercall page is filled by Xen with stubs you call into (see ELF .notes)
+
+- For PVH:
+  - `hvm_start_info` at boot contains E820 map
+  - Hypercalls are made via `VMCALL` (Intel) / `VMMCALL` (AMD) directly (no hypercall page)
+  - Xenstore location comes from a `HVMOP_get_param` hypercall (not from start struct like PV)
+
+## Run PV guest
 - You need to copy the config file to Dom0
 - From Dom0:
 ```sh
