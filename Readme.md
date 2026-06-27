@@ -116,7 +116,7 @@ Parsing config from xen-pv64.cfg
 - You should see the message on the console.
 
 ## Next steps
-- panic through console
+- ~~panic through console~~
 - read console input ring
 - handle event channel instead of polling inputs
 - play with a disk

@@ -33,14 +33,20 @@ pub extern "C" fn kernel_main() -> ! {
     // Init pv console is only required for PvConsoleWriter
     console::init_pv_console();
 
+    // See the message in panic if you don't see the message in xl dmesg.
     let _ = write!(ConsoleWriter, "Hello via HYPERVISOR_console_io\r\n");
     let _ = write!(PvConsoleWriter, "Hello via PV console!\r\n");
 
-    shutdown();
+    panic!("We will shutdown!!!");
+    //shutdown();
 }
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    let _ = write!(ConsoleWriter, "\nPANIC: {}\r\n", info);
+    // I'm testing the guest on a release build of XCP-ng and
+    // HYPERVISOR_console_io are blocked (compiled without CONFIG_VERBOSE_DEBUG).
+    // So we are using the pvconsole to have panic.
+    console::init_pv_console(); // can be called even if already called in main
+    let _ = write!(PvConsoleWriter, "PANIC: {}\r\n", info);
     shutdown();
 }
