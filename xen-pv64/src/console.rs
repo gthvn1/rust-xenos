@@ -158,3 +158,47 @@ fn pv_console_write(s: &str) {
         );
     }
 }
+
+// Note: String are not available in no_std because it needs heap allocator.
+// Use a fixed-suze stack buffer instead.
+pub fn pv_console_read_line(buf: &mut [u8]) -> usize {
+    let mut idx = 0;
+    while idx < buf.len() {
+        let b = pv_console_read_byte_blocking();
+        buf[idx] = b;
+        idx += 1;
+        if b == b'\n' || b == b'\r' {
+            break;
+        }
+    }
+
+    idx
+}
+
+fn pv_console_read_byte_blocking() -> u8 {
+    loop {
+        if let Some(b) = pv_console_read_byte() {
+            return b;
+        }
+        core::hint::spin_loop();
+    }
+}
+
+// Xenconsoled writes into in_buf and advances in_prod. We need to
+// read in_buf and advance in_cons.
+fn pv_console_read_byte() -> Option<u8> {
+    let cons = &raw mut CONSOLE_RING as *mut XenConsInterface;
+
+    let in_prod = unsafe { core::ptr::read_volatile(&(*cons).in_prod) };
+    let in_cons = unsafe { core::ptr::read_volatile(&(*cons).in_cons) };
+    // There is something to read if in_prod != in_cons
+    if in_prod != in_cons {
+        // in_buf is 1024 bytes
+        let idx = (in_cons as usize) & (1024 - 1);
+        let b = unsafe { core::ptr::read_volatile(&(*cons).in_buf[idx]) };
+        unsafe { core::ptr::write_volatile(&mut (*cons).in_cons, in_cons.wrapping_add(1)) };
+        Some(b)
+    } else {
+        None
+    }
+}

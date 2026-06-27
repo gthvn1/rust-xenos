@@ -114,10 +114,18 @@ Parsing config from xen-pv64.cfg
 # xl unpause xen-pv64
 ```
 - You should see the message on the console.
+```
+[14:03 xcp-gtn-ip14 ~]# xl console xen-pv64
+Hello via PV console!
+Please enter something:
+we read 9 bytes
+hello
+[14:47 xcp-gtn-ip14 ~]#
+```
 
 ## Next steps
 - ~~panic through console~~
-- read console input ring
+- ~~read console input ring~~
 - handle event channel instead of polling inputs
 - play with a disk
   - read from Xenstore to discover what block devices dom0 is offering to us

@@ -35,10 +35,19 @@ pub extern "C" fn kernel_main() -> ! {
 
     // See the message in panic if you don't see the message in xl dmesg.
     let _ = write!(ConsoleWriter, "Hello via HYPERVISOR_console_io\r\n");
-    let _ = write!(PvConsoleWriter, "Hello via PV console!\r\n");
 
-    panic!("We will shutdown!!!");
-    //shutdown();
+    let _ = write!(PvConsoleWriter, "Hello via PV console!\r\n");
+    let _ = write!(PvConsoleWriter, "Please enter something: ");
+
+    // Read something from pv console
+    let mut buf = [0u8; 64];
+    let bytes_read = console::pv_console_read_line(&mut buf);
+
+    let _ = write!(PvConsoleWriter, "\r\nwe read {} bytes\r\n", bytes_read);
+    let input = core::str::from_utf8(&buf[0..bytes_read]).unwrap_or("???");
+    let _ = write!(PvConsoleWriter, "{}\r\n", input);
+
+    shutdown();
 }
 
 #[panic_handler]
