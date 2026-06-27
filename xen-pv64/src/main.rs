@@ -4,7 +4,7 @@
 mod console;
 mod hypercall;
 
-use hypercall::{Hypercall, hypercall2, hypercall3};
+use hypercall::{Hypercall, hypercall2};
 
 core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
 
