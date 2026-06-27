@@ -72,11 +72,29 @@ pub fn init_pv_console() {
     }
 }
 
-pub fn console_write(s: &str) {
+pub struct ConsoleWriter;
+
+impl core::fmt::Write for ConsoleWriter {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        console_write(s);
+        Ok(())
+    }
+}
+
+fn console_write(s: &str) {
     let ptr = s.as_ptr();
     let len = s.len();
     unsafe {
         hypercall3::<{ Hypercall::ConsoleIo as usize }>(0, len, ptr as usize);
+    }
+}
+
+pub struct PvConsoleWriter;
+
+impl core::fmt::Write for PvConsoleWriter {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        pv_console_write(s);
+        Ok(())
     }
 }
 
@@ -108,7 +126,7 @@ pub fn console_write(s: &str) {
 // and so on
 // the indice grow forever but we use `& (2048 -1)` to artificially wrap
 //
-pub fn pv_console_write(s: &str) {
+fn pv_console_write(s: &str) {
     let cons = &raw mut CONSOLE_RING as *mut XenConsInterface;
     let port = unsafe { CONSOLE_EVTCHN };
 

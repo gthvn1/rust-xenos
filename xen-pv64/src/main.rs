@@ -4,6 +4,8 @@
 mod console;
 mod hypercall;
 
+use console::{ConsoleWriter, PvConsoleWriter};
+use core::fmt::Write;
 use hypercall::{Hypercall, hypercall2};
 
 core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
@@ -22,19 +24,23 @@ fn shutdown() -> ! {
             &reason as *const u32 as usize,
         );
     }
-    // unreachable
-    loop {}
+
+    panic!("unreachable")
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    console::console_write("Hello via HYPERVISOR_console_io\r\n");
+    // Init pv console is only required for PvConsoleWriter
     console::init_pv_console();
-    console::pv_console_write("Hello via PV console!\r\n");
+
+    let _ = write!(ConsoleWriter, "Hello via HYPERVISOR_console_io\r\n");
+    let _ = write!(PvConsoleWriter, "Hello via PV console!\r\n");
+
     shutdown();
 }
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    let _ = write!(ConsoleWriter, "\nPANIC: {}\r\n", info);
+    shutdown();
 }
