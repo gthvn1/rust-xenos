@@ -84,23 +84,30 @@ pub extern "C" fn kernel_main() -> ! {
 
     let _ = write!(PvConsoleWriter, "\r\nEnter wait loop\r\n");
 
-    loop {
+    let mut line_buf = [0u8; 64];
+    let mut line_len = 0usize;
+    let mut done = false;
+
+    while !done {
         match events::wait_event() {
             Event::Port(p) if p == console_evtchn => {
-                // drain the input ring and echo bytes back
                 while let Some(b) = console::pv_console_read_byte() {
-                    let _ = write!(PvConsoleWriter, "echo: <{}>\r\n", b);
+                    if b == b'\r' || b == b'\n' {
+                        let s = core::str::from_utf8(&line_buf[..line_len]).unwrap_or("?");
+                        let _ = write!(PvConsoleWriter, "\r\nGot: {}\r\n", s);
+                        done = true;
+                        break;
+                    } else if line_len < line_buf.len() {
+                        line_buf[line_len] = b;
+                        line_len += 1;
+                    }
                 }
             }
-            Event::Port(p) => {
-                let _ = write!(PvConsoleWriter, "\r\nIgnore unknown port {:#x}\r\n", p);
-            }
-            Event::Spurious(x) => {
-                let _ = write!(PvConsoleWriter, "\r\nSpurious {:#x} received\r\n", x);
-            }
+            Event::Port(_) => {}
+            Event::Spurious(_) => {}
             Event::Timeout => {
-                let _ = write!(PvConsoleWriter, "\r\nGot timeout\r\n");
-                break;
+                let _ = write!(PvConsoleWriter, "\r\nTimeout, shutting down\r\n");
+                done = true;
             }
         }
     }

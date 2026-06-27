@@ -156,14 +156,16 @@ pub fn wait_event() -> Event {
     };
 
     unsafe {
+        // Clear upcall_pending BEFORE calling SCHEDOP_poll so that if a new
+        // event arrives between the clear and the hypercall, Xen will re-set
+        // it and the poll returns immediately instead of blocking forever.
+        let up_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_upcall_pending;
+        core::ptr::write_volatile(up_ptr, 0);
+
         hypercall2::<{ Hypercall::SchedOp as usize }>(
             schedop_poll_policy,
             &poll as *const _ as usize,
         );
-
-        // clear upcall pending BEFORE checking (avoid race condition)
-        let up_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_upcall_pending;
-        core::ptr::write_volatile(up_ptr, 0);
 
         // read pending sel to find the idx in evtchn_pending
         // pending_select is a bitmask of words. If set it gives you where
@@ -172,7 +174,7 @@ pub fn wait_event() -> Event {
         let pending_select = core::ptr::read_volatile(ps_ptr);
 
         if pending_select == 0 {
-            return Event::Spurious(0);
+            return Event::Timeout;
         }
 
         let idx = pending_select.trailing_zeros() as usize;
@@ -189,8 +191,16 @@ pub fn wait_event() -> Event {
         let bit = val.trailing_zeros() as usize;
         let port = idx * 64 + bit;
 
-        // Clear ONLY that bits
-        core::ptr::write_volatile(ptr, val & !(1u64 << bit));
+        // Clear ONLY that bit in evtchn_pending
+        let new_val = val & !(1u64 << bit);
+        core::ptr::write_volatile(ptr, new_val);
+
+        // If the word is now empty clear the stale pending_sel bit so the
+        // next wakeup does not scan an empty word and return Spurious.
+        if new_val == 0 {
+            let ps = core::ptr::read_volatile(ps_ptr);
+            core::ptr::write_volatile(ps_ptr, ps & !(1u64 << idx));
+        }
 
         Event::Port(port as u32)
     }
