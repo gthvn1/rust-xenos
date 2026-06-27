@@ -95,3 +95,14 @@ Parsing config from xen-pv64.cfg
 # xl unpause xen-pv64
 ```
 - You should see the message on the console.
+
+## Next steps
+- panic through console
+- read console input ring
+- handle event channel instead of polling inputs
+- play with a disk
+  - read from Xenstore to discover what block devices dom0 is offering to us
+  - setup grant table entry and a shared ring (blkif protocol)
+  - setup an event channel
+  - do I/O requests on the ring
+- Switch to PVH guest: native CPU, hvm_start_info, E820 memory map
