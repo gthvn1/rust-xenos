@@ -24,28 +24,6 @@ struct ConsPage([u8; 4096]);
 static mut CONSOLE_RING: ConsPage = ConsPage([0; 4096]);
 static mut CONSOLE_EVTCHN: u32 = 0;
 
-#[unsafe(no_mangle)]
-static mut pv_start_info: u64 = 0;
-
-// x86_64 PV start_info: must match Xen ABI exactly.
-// The C compiler inserts 4-byte padding before each u64 field that follows
-// a u32 (_pad1 before store_mfn, _pad2 before the console union).
-//
-// See xen/include/public/xen.h
-#[repr(C)]
-struct StartInfo {
-    magic: [u8; 32],
-    nr_pages: u64,
-    shared_info: u64, // Machine address of shared info struct
-    flags: u32,
-    _pad1: u32,
-    store_mfn: u64,
-    store_evtchn: u32,
-    _pad2: u32,
-    console_mfn: u64,    // offset 72/
-    console_evtchn: u32, // offset 80
-}
-
 // Map the console MFN over CONSOLE_RING so we can access it.
 // Must be called once before pv_console_write.
 //
@@ -53,12 +31,9 @@ struct StartInfo {
 //   rdi = virtual address of the page to remap (our placeholder)
 //   rsi = new PTE: (mfn << 12) | Present | RW
 //   rdx = UVMF_INVLPG (2): invalidate this single TLB entry
-pub fn init_pv_console() {
-    let si = unsafe { pv_start_info as *const StartInfo };
-    let mfn = unsafe { (*si).console_mfn };
-
+pub fn init_pv_console(mfn: u64, evtchn: u32) {
     unsafe {
-        CONSOLE_EVTCHN = (*si).console_evtchn;
+        CONSOLE_EVTCHN = evtchn;
     }
 
     // Page is 4096 bytes, so mfn << 12 gives the physical address

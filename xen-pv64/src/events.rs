@@ -1,0 +1,189 @@
+use crate::hypercall::{Hypercall, hypercall2, hypercall3};
+
+// xen/include/public/xen.h
+
+// 'evtchn_upcall_pending' is written non-zero by Xen to indicate
+// a pending notification for a particular VCPU. It is then cleared
+// by the guest OS /before/ checking for pending work, thus avoiding
+// a set-and-check race. Note that the mask is only accessed by Xen
+// on the CPU that is currently hosting the VCPU. This means that the
+// pending and mask flags can be updated by the guest without special
+// synchronisation (i.e., no need for the x86 LOCK prefix).
+// This may seem suboptimal because if the pending flag is set by
+// a different CPU then an IPI may be scheduled even when the mask
+// is set. However, note:
+//  1. The task of 'interrupt holdoff' is covered by the per-event-
+//     channel mask bits. A 'noisy' event that is continually being
+//     triggered can be masked at source at this very precise
+//     granularity.
+//  2. The main purpose of the per-VCPU mask is therefore to restrict
+//     reentrant execution: whether for concurrency control, or to
+//     prevent unbounded stack usage. Whatever the purpose, we expect
+//     that the mask will be asserted only for short periods at a time,
+//     and so the likelihood of a 'spurious' IPI is suitably small.
+// The mask is read before making an event upcall to the guest: a
+// non-zero mask therefore guarantees that the VCPU will not receive
+// an upcall activation. The mask is cleared when the VCPU requests
+// to block: this avoids wakeup-waiting races.
+#[allow(dead_code)]
+#[repr(C)]
+struct VcpuInfo {
+    evtchn_upcall_pending: u8, // 1 byte
+    evtchn_upcall_mask: u8,    // 1 byte
+    _pad: [u8; 6],             // 6 bytes alignment padding
+    evtchn_pending_sel: u64,   // 8 bytes
+    _arch: [u64; 2],           // 16 bytes (arch_vcpu_info we don't use)
+    _time: [u64; 4],           // 32 bytes vcpu_time_info we don't use)
+                               // 64 bytes
+}
+const _: () = assert!(core::mem::size_of::<VcpuInfo>() == 64);
+
+// A domain can create "event channels" on which it can send and receive
+// asynchronous event notifications. There are three classes of event that
+// are delivered by this mechanism:
+//  1. Bi-directional inter- and intra-domain connections. Domains must
+//     arrange out-of-band to set up a connection (usually by allocating
+//     an unbound 'listener' port and avertising that via a storage service
+//     such as xenstore).
+//  2. Physical interrupts. A domain with suitable hardware-access
+//     privileges can bind an event-channel port to a physical interrupt
+//     source.
+//  3. Virtual interrupts ('events'). A domain can bind an event-channel
+//     port to a virtual interrupt source, such as the virtual-timer
+//     device or the emergency console.
+//
+// Event channels are addressed by a "port index". Each channel is
+// associated with two bits of information:
+//  1. PENDING -- notifies the domain that there is a pending notification
+//     to be processed. This bit is cleared by the guest.
+//  2. MASK -- if this bit is clear then a 0->1 transition of PENDING
+//     will cause an asynchronous upcall to be scheduled. This bit is only
+//     updated by the guest. It is read-only within Xen. If a channel
+//     becomes pending while the channel is masked then the 'edge' is lost
+//     (i.e., when the channel is unmasked, the guest must manually handle
+//     pending notifications as no upcall will be scheduled by Xen).
+//
+// To expedite scanning of pending notifications, any 0->1 pending
+// transition on an unmasked channel causes a corresponding bit in a
+// per-vcpu selector word to be set. Each bit in the selector covers a
+// 'C long' in the PENDING bitfield array.
+#[allow(dead_code)]
+#[repr(C)]
+struct SharedInfo {
+    vcpu_info: [VcpuInfo; 32], // 64 * 32 = 2048 bytes
+    evtchn_pending: [u64; 64], // 8 * 64 = 512 bytes
+    evtchn_mask: [u64; 64],    // 8 * 64 = 512 bytes
+                               // We don't need anything else for now
+}
+
+#[allow(dead_code)]
+#[repr(align(4096))]
+struct InfoPage([u8; 4096]);
+
+// SHARED_INFO page is just a raw byte array wrapper
+static mut SHARED_INFO: InfoPage = InfoPage([0; 4096]);
+// So keep a pointer to acces its field
+static mut SI_PTR: *mut SharedInfo = &raw mut SHARED_INFO as *mut SharedInfo;
+
+pub enum Event {
+    Port(u32), // fired port number
+    Timeout,
+}
+
+// We need to maps the page in the page table
+pub fn init(shared_info_maddr: u64) {
+    let virt = &raw const SHARED_INFO as *const _ as usize;
+    let pte: usize = (shared_info_maddr as usize) | 0x3; /* P | RW */
+    let uvmf_invlpg: usize = 2; // use UVMF_INVLPG to tell Xen to flush TLB
+
+    unsafe {
+        hypercall3::<{ Hypercall::UpdateVaMapping as usize }>(virt, pte, uvmf_invlpg);
+    }
+}
+
+// Port goes from 0 to 4095: evtchn_mask is 512 bytes so 4096 bits
+//
+// Clearing a bit: for port N in a [u64; 64] bitmap:
+//  - word index = port / 64
+//  - bit index = port % 64
+//  - clear mask = !(1u64 << bit)
+//
+// evtchn_mask bit = 1 => masked (events blocked)
+// evtchn_mask bit = 0 => unmasked (delivered)
+//
+pub fn unmask_port(port: u32) {
+    let idx = (port / 64) as usize;
+    let bit = (port % 64) as usize;
+
+    unsafe {
+        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
+        let val = core::ptr::read_volatile(ptr);
+        core::ptr::write_volatile(ptr, val & !(1u64 << bit));
+    }
+}
+
+pub fn mask_port(port: u32) {
+    let idx = (port / 64) as usize;
+    let bit = (port % 64) as usize;
+
+    unsafe {
+        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
+        let val = core::ptr::read_volatile(ptr);
+        core::ptr::write_volatile(ptr, val | (1u64 << bit));
+    }
+}
+
+// We want to use HYPERVISOR_sched_op
+// -> We will use SCHEDOP_poll
+#[allow(dead_code)]
+#[repr(C)]
+struct SchedPoll {
+    ports: *const u32, // pointer to array of port numbers to watch
+    nr_ports: u32,
+    _pad: u32,
+    timeout: u64, // nanoseconds, 0 = block forever
+}
+
+pub fn wait_event() -> Event {
+    let schedop_poll_policy: usize = 3;
+    let poll = SchedPoll {
+        ports: core::ptr::null(),
+        nr_ports: 0,
+        _pad: 0,
+        timeout: 10_000_000,
+    };
+
+    unsafe {
+        hypercall2::<{ Hypercall::SchedOp as usize }>(
+            schedop_poll_policy,
+            &poll as *const _ as usize,
+        );
+
+        // clear upcall pending BEFORE checking (avoid race condition)
+        let up_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_upcall_pending;
+        core::ptr::write_volatile(up_ptr, 0);
+
+        // read pending sel to find the idx in evtchn_pending
+        // pending_select is a bitmask of words. If set it gives you where
+        // in evtchn_pending the event is
+        let ps_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_pending_sel;
+        let pending_select = core::ptr::read_volatile(ps_ptr);
+
+        if pending_select == 0 {
+            return Event::Timeout;
+        }
+
+        let idx = pending_select.trailing_zeros() as usize;
+        // read the word from evtchn_pending
+        let ptr = &raw mut (*SI_PTR).evtchn_pending[idx];
+        // find the first set bit
+        let val = core::ptr::read_volatile(ptr);
+        let bit = val.trailing_zeros() as usize;
+        let port = idx * 64 + bit;
+
+        // Clear ONLY that bits
+        core::ptr::write_volatile(ptr, val & !(1u64 << bit));
+
+        Event::Port(port as u32)
+    }
+}
