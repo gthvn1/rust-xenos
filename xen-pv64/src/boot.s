@@ -31,10 +31,10 @@
 /* XEN_ELFNOTE_GUEST_OS = 6: identify the OS, any string is fine */
 .align 4
 .long 4                     /* namesz: "Xen\0" = 4 */
-.long 4                     /* descsz: "XTF\0" = 4 */
+.long 6                     /* descsz: "xenos\0" = 6 */
 .long 6
 .asciz "Xen"
-.asciz "XTF"
+.asciz "xenos"
 
 /* XEN_ELFNOTE_GUEST_VERSION = 7 */
 .align 4
