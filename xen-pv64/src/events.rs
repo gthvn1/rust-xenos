@@ -85,9 +85,11 @@ static mut SHARED_INFO: InfoPage = InfoPage([0; 4096]);
 // So keep a pointer to acces its field
 static mut SI_PTR: *mut SharedInfo = &raw mut SHARED_INFO as *mut SharedInfo;
 
+#[allow(dead_code)]
 pub enum Event {
     Port(u32), // fired port number
     Timeout,
+    Spurious(u64), // pending_sel value for debugging
 }
 
 // We need to maps the page in the page table
@@ -170,14 +172,20 @@ pub fn wait_event() -> Event {
         let pending_select = core::ptr::read_volatile(ps_ptr);
 
         if pending_select == 0 {
-            return Event::Timeout;
+            return Event::Spurious(0);
         }
 
         let idx = pending_select.trailing_zeros() as usize;
+        if idx >= 64 {
+            return Event::Spurious(idx as u64);
+        }
         // read the word from evtchn_pending
         let ptr = &raw mut (*SI_PTR).evtchn_pending[idx];
         // find the first set bit
         let val = core::ptr::read_volatile(ptr);
+        if val == 0 {
+            return Event::Spurious(0);
+        }
         let bit = val.trailing_zeros() as usize;
         let port = idx * 64 + bit;
 

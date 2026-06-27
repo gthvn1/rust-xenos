@@ -7,9 +7,9 @@ mod hypercall;
 
 use console::{ConsoleWriter, PvConsoleWriter};
 use core::fmt::Write;
-use hypercall::{Hypercall, hypercall2};
+use hypercall::Hypercall;
 
-use crate::events::{Event, wait_event};
+use crate::events::Event;
 
 core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
 
@@ -45,7 +45,7 @@ fn shutdown() -> ! {
     let reason: u32 = 0; // SHUTDOWN_poweroff
     let schedop_shutdown: usize = 2;
     unsafe {
-        hypercall2::<{ Hypercall::SchedOp as usize }>(
+        hypercall::hypercall2::<{ Hypercall::SchedOp as usize }>(
             schedop_shutdown,
             &reason as *const u32 as usize,
         );
@@ -84,13 +84,29 @@ pub extern "C" fn kernel_main() -> ! {
 
     let _ = write!(PvConsoleWriter, "\r\nEnter wait loop\r\n");
 
-    match wait_event() {
-        Event::Port(_) => panic!("Got event on port"),
-        Event::Timeout => {
-            let _ = write!(PvConsoleWriter, "\r\nGot timeout\r\n");
+    loop {
+        match events::wait_event() {
+            Event::Port(p) if p == console_evtchn => {
+                // drain the input ring and echo bytes back
+                while let Some(b) = console::pv_console_read_byte() {
+                    let _ = write!(PvConsoleWriter, "echo: <{}>\r\n", b);
+                }
+            }
+            Event::Port(p) => {
+                let _ = write!(PvConsoleWriter, "\r\nIgnore unknown port {:#x}\r\n", p);
+            }
+            Event::Spurious(x) => {
+                let _ = write!(PvConsoleWriter, "\r\nSpurious {:#x} received\r\n", x);
+            }
+            Event::Timeout => {
+                let _ = write!(PvConsoleWriter, "\r\nGot timeout\r\n");
+                break;
+            }
         }
     }
 
+    // It is just for calling mask_port
+    events::mask_port(console_evtchn);
     shutdown();
 }
 

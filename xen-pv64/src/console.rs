@@ -161,7 +161,7 @@ fn pv_console_read_byte_blocking() -> u8 {
 
 // Xenconsoled writes into in_buf and advances in_prod. We need to
 // read in_buf and advance in_cons.
-fn pv_console_read_byte() -> Option<u8> {
+pub fn pv_console_read_byte() -> Option<u8> {
     let cons = &raw mut CONSOLE_RING as *mut XenConsInterface;
 
     let in_prod = unsafe { core::ptr::read_volatile(&(*cons).in_prod) };
