@@ -87,6 +87,8 @@ pub extern "C" fn kernel_main() -> ! {
     let mut line_buf = [0u8; 64];
     let mut line_len = 0usize;
     let mut done = false;
+    let mut spurious_count = 0u32;
+    let mut unknown_port_count = 0u32;
 
     while !done {
         match events::wait_event() {
@@ -103,14 +105,24 @@ pub extern "C" fn kernel_main() -> ! {
                     }
                 }
             }
-            Event::Port(_) => {}
-            Event::Spurious(_) => {}
+            Event::Port(_) => {
+                unknown_port_count += 1;
+            }
+            Event::Spurious(_) => {
+                spurious_count += 1;
+            }
             Event::Timeout => {
                 let _ = write!(PvConsoleWriter, "\r\nTimeout, shutting down\r\n");
                 done = true;
             }
         }
     }
+
+    let _ = write!(
+        PvConsoleWriter,
+        "spurious={} unknown_port={}\r\n",
+        spurious_count, unknown_port_count
+    );
 
     // It is just for calling mask_port
     events::mask_port(console_evtchn);
