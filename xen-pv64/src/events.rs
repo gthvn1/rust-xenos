@@ -113,27 +113,27 @@ pub fn init(shared_info_maddr: u64) {
 // evtchn_mask bit = 1 => masked (events blocked)
 // evtchn_mask bit = 0 => unmasked (delivered)
 //
-pub fn unmask_port(port: u32) {
-    let idx = (port / 64) as usize;
-    let bit = (port % 64) as usize;
-
-    unsafe {
-        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
-        let val = core::ptr::read_volatile(ptr);
-        core::ptr::write_volatile(ptr, val & !(1u64 << bit));
-    }
-}
-
-pub fn mask_port(port: u32) {
-    let idx = (port / 64) as usize;
-    let bit = (port % 64) as usize;
-
-    unsafe {
-        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
-        let val = core::ptr::read_volatile(ptr);
-        core::ptr::write_volatile(ptr, val | (1u64 << bit));
-    }
-}
+//pub fn unmask_port(port: u32) {
+//    let idx = (port / 64) as usize;
+//    let bit = (port % 64) as usize;
+//
+//    unsafe {
+//        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
+//        let val = core::ptr::read_volatile(ptr);
+//        core::ptr::write_volatile(ptr, val & !(1u64 << bit));
+//    }
+//}
+//
+//pub fn mask_port(port: u32) {
+//    let idx = (port / 64) as usize;
+//    let bit = (port % 64) as usize;
+//
+//    unsafe {
+//        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
+//        let val = core::ptr::read_volatile(ptr);
+//        core::ptr::write_volatile(ptr, val | (1u64 << bit));
+//    }
+//}
 
 // We want to use HYPERVISOR_sched_op
 // -> We will use SCHEDOP_poll
@@ -146,62 +146,77 @@ struct SchedPoll {
     timeout: u64, // nanoseconds, 0 = block forever
 }
 
-pub fn wait_event() -> Event {
-    let schedop_poll_policy: usize = 3;
-    let poll = SchedPoll {
-        ports: core::ptr::null(),
-        nr_ports: 0,
-        _pad: 0,
-        timeout: 10_000_000,
-    };
+pub struct EventPoller {
+    ports: [u32; 16],
+    count: usize,
+}
 
-    unsafe {
-        // Clear upcall_pending BEFORE calling SCHEDOP_poll so that if a new
-        // event arrives between the clear and the hypercall, Xen will re-set
-        // it and the poll returns immediately instead of blocking forever.
-        let up_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_upcall_pending;
-        core::ptr::write_volatile(up_ptr, 0);
-
-        hypercall2::<{ Hypercall::SchedOp as usize }>(
-            schedop_poll_policy,
-            &poll as *const _ as usize,
-        );
-
-        // read pending sel to find the idx in evtchn_pending
-        // pending_select is a bitmask of words. If set it gives you where
-        // in evtchn_pending the event is
-        let ps_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_pending_sel;
-        let pending_select = core::ptr::read_volatile(ps_ptr);
-
-        if pending_select == 0 {
-            return Event::Timeout;
+impl EventPoller {
+    pub const fn new() -> Self {
+        Self {
+            ports: [0u32; 16],
+            count: 0,
         }
+    }
 
-        let idx = pending_select.trailing_zeros() as usize;
-        if idx >= 64 {
-            return Event::Spurious(idx as u64);
+    pub fn add_port(&mut self, port: u32) -> Result<(), ()> {
+        if self.count + 1 >= self.ports.len() {
+            Err(())
+        } else {
+            self.ports[self.count] = port;
+            self.count += 1;
+            Ok(())
         }
-        // read the word from evtchn_pending
-        let ptr = &raw mut (*SI_PTR).evtchn_pending[idx];
-        // find the first set bit
-        let val = core::ptr::read_volatile(ptr);
-        if val == 0 {
-            return Event::Spurious(0);
+    }
+
+    pub fn remove_port(&mut self, _port: u32) -> Result<(), ()> {
+        todo!()
+    }
+
+    pub fn wait_event(&self) -> Event {
+        let schedop_poll_policy: usize = 3;
+
+        // _time[2] == vcpu_time_info.system_time: nanoseconds since boot (absolute).
+        // SCHEDOP_poll timeout is also absolute nanoseconds, so we add our desired
+        // delay to the current time.
+        let now = unsafe { core::ptr::read_volatile(&raw mut (*SI_PTR).vcpu_info[0]._time[2]) };
+
+        let poll = SchedPoll {
+            ports: self.ports.as_ptr(),
+            nr_ports: 1,
+            _pad: 0,
+            timeout: now + 5_000_000_000, // now + 5 seconds
+        };
+
+        unsafe {
+            // TODO: manage several ports, currently we know that we have one port only and it is
+            // set
+            let port = self.ports[0];
+
+            // Clear upcall_pending BEFORE calling SCHEDOP_poll so that if a new
+            // event arrives between the clear and the hypercall, Xen will re-set
+            // it and the poll returns immediately instead of blocking forever.
+            let up_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_upcall_pending;
+            core::ptr::write_volatile(up_ptr, 0);
+
+            hypercall2::<{ Hypercall::SchedOp as usize }>(
+                schedop_poll_policy,
+                &poll as *const _ as usize,
+            );
+
+            // With a masked port, Xen sets evtchn_pending but does NOT set
+            // evtchn_pending_sel. Check evtchn_pending directly for our port.
+            let word_idx = (port / 64) as usize;
+            let bit_idx = (port % 64) as usize;
+            let pending_ptr = &raw mut (*SI_PTR).evtchn_pending[word_idx];
+            let pending_val = core::ptr::read_volatile(pending_ptr);
+
+            if pending_val & (1u64 << bit_idx) != 0 {
+                core::ptr::write_volatile(pending_ptr, pending_val & !(1u64 << bit_idx));
+                Event::Port(port)
+            } else {
+                Event::Timeout
+            }
         }
-        let bit = val.trailing_zeros() as usize;
-        let port = idx * 64 + bit;
-
-        // Clear ONLY that bit in evtchn_pending
-        let new_val = val & !(1u64 << bit);
-        core::ptr::write_volatile(ptr, new_val);
-
-        // If the word is now empty clear the stale pending_sel bit so the
-        // next wakeup does not scan an empty word and return Spurious.
-        if new_val == 0 {
-            let ps = core::ptr::read_volatile(ps_ptr);
-            core::ptr::write_volatile(ps_ptr, ps & !(1u64 << idx));
-        }
-
-        Event::Port(port as u32)
     }
 }
