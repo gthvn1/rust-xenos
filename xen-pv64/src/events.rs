@@ -89,7 +89,6 @@ static mut SHI_PTR: *mut SharedInfo = &raw mut SHARED_INFO as *mut SharedInfo;
 pub enum Event {
     Port(u32), // fired port number
     Timeout,
-    Spurious(u64), // pending_sel value for debugging
 }
 
 // We need to map the page in our page table

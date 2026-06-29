@@ -5,7 +5,7 @@ mod console;
 mod events;
 mod hypercall;
 
-use console::{ConsoleWriter, PvConsoleWriter};
+use console::{ConsoleWriter, PvConsoleWriter as PCW};
 use core::fmt::Write;
 use hypercall::Hypercall;
 
@@ -35,7 +35,7 @@ struct StartInfo {
     store_mfn: u64,
     store_evtchn: u32,
     _pad2: u32,
-    console_mfn: u64,    // offset 72/
+    console_mfn: u64,    // offset 72
     console_evtchn: u32, // offset 80
 }
 
@@ -73,33 +73,65 @@ pub extern "C" fn kernel_main() -> ! {
     // Init pv console is only required for PvConsoleWriter
     console::init_pv_console(console_mfn, console_evtchn);
 
+    // Console writer probably won't work if Xen is not compiled with the correct
+    // flag. But let it there as an example of how to do it.
     let _ = write!(ConsoleWriter, "Hello via HYPERVISOR_console_io\r\n");
-    let _ = write!(PvConsoleWriter, "Hello via PV console!\r\n");
-    let _ = write!(PvConsoleWriter, "Please enter something: ");
+
+    let _ = write!(PCW, "xenos: PV guest started\r\n");
+    let _ = write!(
+        PCW,
+        "xenos: memory {} MiB\r\n",
+        unsafe { (*start_info()).nr_pages } * 4096 / 1024 / 1024
+    );
+    let _ = write!(
+        PCW,
+        "xenos: console evtchn={} store evtchn={}\r\n",
+        console_evtchn,
+        unsafe { (*start_info()).store_evtchn }
+    );
+
+    // Testing the PV console by writing something and read user input
+    let _ = write!(
+        PCW,
+        "xenos: console self-test: enter something (blocking wait)..."
+    );
 
     // Read something from pv console
     let mut buf = [0u8; 64];
     let bytes_read = console::pv_console_read_line(&mut buf);
 
-    let _ = write!(PvConsoleWriter, "\r\nwe read {} bytes\r\n", bytes_read);
+    let _ = write!(
+        PCW,
+        "\r\nxenos: console self-test: read {} bytes\r\n",
+        bytes_read
+    );
     let input = core::str::from_utf8(&buf[0..bytes_read]).unwrap_or("???");
-    let _ = write!(PvConsoleWriter, "{}\r\n", input);
+    let _ = write!(PCW, "xenos: console self-test: {}\r\n", input);
 
-    let _ = write!(PvConsoleWriter, "\r\nEnter wait loop\r\n");
+    // Now the main loop
+    let _ = write!(PCW, "xenos: entering event loop\r\n");
+    let _ = write!(PCW, "xenos: waiting for console input (5s timeout)\r\n");
 
     let mut line_buf = [0u8; 64];
     let mut line_len = 0usize;
     let mut done = false;
-    let mut spurious_count = 0u32;
     let mut unknown_port_count = 0u32;
 
     while !done {
         match event.wait_event() {
             Event::Port(p) if p == console_evtchn => {
                 while let Some(b) = console::pv_console_read_byte() {
+                    // Echo the character if it is printable
+                    if b.is_ascii_graphic() || b == b' ' {
+                        let _ = write!(PCW, "{}", b as char);
+                    }
+
+                    // If we have an end of line we are done, otherwise keep reading
+                    // and add the charater to line_buf. It is for debugging so no need
+                    // to check the size for now...
                     if b == b'\r' || b == b'\n' {
                         let s = core::str::from_utf8(&line_buf[..line_len]).unwrap_or("?");
-                        let _ = write!(PvConsoleWriter, "\r\nGot: {}\r\n", s);
+                        let _ = write!(PCW, "\r\nGot: {}\r\n", s);
                         done = true;
                         break;
                     } else if line_len < line_buf.len() {
@@ -111,24 +143,15 @@ pub extern "C" fn kernel_main() -> ! {
             Event::Port(_) => {
                 unknown_port_count += 1;
             }
-            Event::Spurious(_) => {
-                spurious_count += 1;
-            }
             Event::Timeout => {
-                let _ = write!(PvConsoleWriter, "\r\nTimeout, shutting down\r\n");
+                let _ = write!(PCW, "\r\nxenos: idle timeout, shutting down\r\n");
                 done = true;
             }
         }
     }
 
-    let _ = write!(
-        PvConsoleWriter,
-        "spurious={} unknown_port={}\r\n",
-        spurious_count, unknown_port_count
-    );
-
-    // It is just for calling mask_port
-    //events::mask_port(console_evtchn);
+    let _ = write!(PCW, "xenos: unknown_port={}\r\n", unknown_port_count);
+    let _ = write!(PCW, "xenos: powering off\r\n");
     shutdown();
 }
 
@@ -143,6 +166,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     // Init pv console is only required for PvConsoleWriter
     console::init_pv_console(console_mfn, console_evtchn);
 
-    let _ = write!(PvConsoleWriter, "PANIC: {}\r\n", info);
+    let _ = write!(PCW, "PANIC: {}\r\n", info);
     shutdown();
 }
