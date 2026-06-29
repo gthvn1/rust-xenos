@@ -1,7 +1,8 @@
 # Xenos: a PV guest written in Rust
 
 The goal is to learn Xen internals by writing a PV/PVH guest kernel in Rust: start_info, hypercall page, XenStore, blkfront.
-
+- [Xen source repositories](https://xenbits.xen.org/)
+ 
 ## Current status and next steps
 - ~~panic through console~~
 - ~~read console input ring~~
