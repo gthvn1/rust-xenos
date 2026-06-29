@@ -76,12 +76,10 @@ pub extern "C" fn kernel_main() -> ! {
     // Init pv console is only required for PvConsoleWriter
     console::init_pv_console(console_mfn, console_evtchn);
     // Init xenstore
-    xenstore::init(xs_mfn);
-    // Enable events for console events
-    events::init(shared_info_maddr);
-
+    xenstore::init(xs_mfn, xs_evtchn);
     // Setup events
     let mut event = EventPoller::new();
+    events::init(shared_info_maddr);
     event.add_port(xs_evtchn).unwrap();
     event.add_port(console_evtchn).unwrap();
 
@@ -94,9 +92,8 @@ pub extern "C" fn kernel_main() -> ! {
     );
     let _ = write!(
         PCW,
-        "xenos: console evtchn={} store evtchn={}\r\n",
-        console_evtchn,
-        unsafe { (*start_info()).store_evtchn }
+        "xenos: console evtchn={}, store evtchn={}\r\n",
+        console_evtchn, xs_evtchn
     );
 
     // Testing the PV console by writing something and read user input
@@ -122,7 +119,16 @@ pub extern "C" fn kernel_main() -> ! {
     let _ = write!(PCW, "xenos: waiting for console input (5s timeout)\r\n");
 
     let mut line_buf = [0u8; 64];
-    let mut line_len = 0usize;
+    let mut line_len: usize;
+
+    // For testing we write a req and read the response outside the loop
+    xenstore::write();
+    line_len = xenstore::read(&mut line_buf);
+    let _ = write!(PCW, "xenos: xenstore: read {} bytes\r\n", line_len);
+    let s = core::str::from_utf8(&line_buf[..line_len]).unwrap_or("?");
+    let _ = write!(PCW, "xenos: xenstore: {}\r\n", s);
+
+    line_len = 0;
     let mut done = false;
     let mut unknown_port_count = 0u32;
 

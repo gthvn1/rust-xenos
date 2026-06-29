@@ -26,18 +26,20 @@ Parsing config from xen-pv64.cfg
 ```
 - You should see the message on the console.
 ```
-[21:43 xcp-gtn-ip14 ~]# xl console xen-pv64
+[21:01 xcp-gtn-ip14 ~]# xl console xen-pv64
 xenos: PV guest started
 xenos: memory 64 MiB
-xenos: console evtchn=2 store evtchn=1
+xenos: console evtchn=2, store evtchn=1
 xenos: console self-test: enter something (blocking wait)...
 xenos: console self-test: read 6 bytes
-xenos: console self-test: Hello
+xenos: console self-test: hello
 xenos: entering event loop
 xenos: waiting for console input (5s timeout)
-Sailor!
-Got: Sailor!
-xenos: debug: unknown_port=0
+xenos: xenstore: read 16 bytes
+xenos: xenstore: /local/domain/0
+qsd
+Got: qsd
+xenos: debug: unknown_port=1
 xenos: powering off
 ```
 
