@@ -159,7 +159,7 @@ pub extern "C" fn kernel_main() -> ! {
         }
     }
 
-    let _ = write!(PCW, "xenos: unknown_port={}\r\n", unknown_port_count);
+    let _ = write!(PCW, "xenos: debug: unknown_port={}\r\n", unknown_port_count);
     let _ = write!(PCW, "xenos: powering off\r\n");
     shutdown();
 }

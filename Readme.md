@@ -115,12 +115,19 @@ Parsing config from xen-pv64.cfg
 ```
 - You should see the message on the console.
 ```
-[14:03 xcp-gtn-ip14 ~]# xl console xen-pv64
-Hello via PV console!
-Please enter something:
-we read 9 bytes
-hello
-[14:47 xcp-gtn-ip14 ~]#
+[21:43 xcp-gtn-ip14 ~]# xl console xen-pv64
+xenos: PV guest started
+xenos: memory 64 MiB
+xenos: console evtchn=2 store evtchn=1
+xenos: console self-test: enter something (blocking wait)...
+xenos: console self-test: read 6 bytes
+xenos: console self-test: Hello
+xenos: entering event loop
+xenos: waiting for console input (5s timeout)
+Sailor!
+Got: Sailor!
+xenos: debug: unknown_port=0
+xenos: powering off
 ```
 
 ## Next steps
