@@ -80,7 +80,7 @@
 .section .text.head, "ax", @progbits
 .global _elf_start
 _elf_start:
-    leaq  pv_start_info(%rip), %rax   /* load address of pv_start_info */
+    leaq  START_INFO_PTR(%rip), %rax   /* load address of pv_start_info */
     movq  %rsi, (%rax)                /* store start_info pointer there */
     leaq  boot_stack(%rip), %rsp
     addq  $4096, %rsp                  /* point to top of boot stack */

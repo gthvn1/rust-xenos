@@ -13,15 +13,14 @@ use crate::events::{Event, EventPoller};
 
 core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
 
-// Set by reading %rsi from boot
 #[unsafe(no_mangle)]
-static mut pv_start_info: u64 = 0;
+static mut START_INFO_PTR: u64 = 0; // Set by reading %rsi from boot
 
 // boot_stack doesn't need 4K alignment
 #[unsafe(no_mangle)]
 static mut boot_stack: [u8; 4096] = [0; 4096];
 
-// x86_64 PV start_info: must match Xen ABI exactly.
+// x86_64 PV START_INFO: must match Xen ABI exactly.
 // The C compiler inserts 4-byte padding before each u64 field that follows
 // a u32 (_pad1 before store_mfn, _pad2 before the console union).
 //
@@ -54,13 +53,17 @@ fn shutdown() -> ! {
     panic!("unreachable")
 }
 
+fn start_info() -> *const StartInfo {
+    // As START_INFO_PTR is initialized before calling kernel_main it is "safe"
+    // to call it everywhere.
+    unsafe { START_INFO_PTR as *const StartInfo }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    let si = unsafe { pv_start_info as *const StartInfo };
-
-    let shared_info_maddr = unsafe { (*si).shared_info };
-    let console_mfn = unsafe { (*si).console_mfn };
-    let console_evtchn = unsafe { (*si).console_evtchn };
+    let shared_info_maddr = unsafe { (*start_info()).shared_info };
+    let console_mfn = unsafe { (*start_info()).console_mfn };
+    let console_evtchn = unsafe { (*start_info()).console_evtchn };
 
     events::init(shared_info_maddr);
     //events::unmask_port(console_evtchn);
@@ -137,9 +140,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     // I'm testing the guest on a release build of XCP-ng and
     // HYPERVISOR_console_io are blocked (compiled without CONFIG_VERBOSE_DEBUG).
     // So we are using the pvconsole to have panic.
-    let si = unsafe { pv_start_info as *const StartInfo };
-    let console_mfn = unsafe { (*si).console_mfn };
-    let console_evtchn = unsafe { (*si).console_evtchn };
+    let console_mfn = unsafe { (*start_info()).console_mfn };
+    let console_evtchn = unsafe { (*start_info()).console_evtchn };
 
     // Init pv console is only required for PvConsoleWriter
     console::init_pv_console(console_mfn, console_evtchn);

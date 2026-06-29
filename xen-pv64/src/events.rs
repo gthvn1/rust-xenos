@@ -83,7 +83,7 @@ struct InfoPage([u8; 4096]);
 // SHARED_INFO page is just a raw byte array wrapper
 static mut SHARED_INFO: InfoPage = InfoPage([0; 4096]);
 // So keep a pointer to acces its field
-static mut SI_PTR: *mut SharedInfo = &raw mut SHARED_INFO as *mut SharedInfo;
+static mut SHI_PTR: *mut SharedInfo = &raw mut SHARED_INFO as *mut SharedInfo;
 
 #[allow(dead_code)]
 pub enum Event {
@@ -118,7 +118,7 @@ pub fn init(shared_info_maddr: u64) {
 //    let bit = (port % 64) as usize;
 //
 //    unsafe {
-//        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
+//        let ptr = &raw mut (*SHI_PTR).evtchn_mask[idx];
 //        let val = core::ptr::read_volatile(ptr);
 //        core::ptr::write_volatile(ptr, val & !(1u64 << bit));
 //    }
@@ -129,7 +129,7 @@ pub fn init(shared_info_maddr: u64) {
 //    let bit = (port % 64) as usize;
 //
 //    unsafe {
-//        let ptr = &raw mut (*SI_PTR).evtchn_mask[idx];
+//        let ptr = &raw mut (*SHI_PTR).evtchn_mask[idx];
 //        let val = core::ptr::read_volatile(ptr);
 //        core::ptr::write_volatile(ptr, val | (1u64 << bit));
 //    }
@@ -148,28 +148,28 @@ struct SchedPoll {
 
 pub struct EventPoller {
     ports: [u32; 16],
-    count: usize,
+    next: usize, // next free index
 }
 
 impl EventPoller {
     pub const fn new() -> Self {
         Self {
             ports: [0u32; 16],
-            count: 0,
+            next: 0,
         }
     }
 
     pub fn add_port(&mut self, port: u32) -> Result<(), ()> {
-        if self.count + 1 >= self.ports.len() {
+        if self.next >= self.ports.len() {
             Err(())
         } else {
-            self.ports[self.count] = port;
-            self.count += 1;
+            self.ports[self.next] = port;
+            self.next += 1;
             Ok(())
         }
     }
 
-    pub fn remove_port(&mut self, _port: u32) -> Result<(), ()> {
+    pub fn _remove_port(&mut self, _port: u32) -> Result<(), ()> {
         todo!()
     }
 
@@ -179,24 +179,24 @@ impl EventPoller {
         // _time[2] == vcpu_time_info.system_time: nanoseconds since boot (absolute).
         // SCHEDOP_poll timeout is also absolute nanoseconds, so we add our desired
         // delay to the current time.
-        let now = unsafe { core::ptr::read_volatile(&raw mut (*SI_PTR).vcpu_info[0]._time[2]) };
+        let now = unsafe { core::ptr::read_volatile(&raw mut (*SHI_PTR).vcpu_info[0]._time[2]) };
 
         let poll = SchedPoll {
             ports: self.ports.as_ptr(),
-            nr_ports: 1,
+            nr_ports: self.next as u32, // next is also indicating the number of ports
             _pad: 0,
             timeout: now + 5_000_000_000, // now + 5 seconds
         };
 
         unsafe {
-            // TODO: manage several ports, currently we know that we have one port only and it is
-            // set
+            // TODO: manage several ports, currently we know that we have one port only and
+            // it is set. We should iterate all ports.
             let port = self.ports[0];
 
             // Clear upcall_pending BEFORE calling SCHEDOP_poll so that if a new
             // event arrives between the clear and the hypercall, Xen will re-set
             // it and the poll returns immediately instead of blocking forever.
-            let up_ptr = &raw mut (*SI_PTR).vcpu_info[0].evtchn_upcall_pending;
+            let up_ptr = &raw mut (*SHI_PTR).vcpu_info[0].evtchn_upcall_pending;
             core::ptr::write_volatile(up_ptr, 0);
 
             hypercall2::<{ Hypercall::SchedOp as usize }>(
@@ -208,7 +208,7 @@ impl EventPoller {
             // evtchn_pending_sel. Check evtchn_pending directly for our port.
             let word_idx = (port / 64) as usize;
             let bit_idx = (port % 64) as usize;
-            let pending_ptr = &raw mut (*SI_PTR).evtchn_pending[word_idx];
+            let pending_ptr = &raw mut (*SHI_PTR).evtchn_pending[word_idx];
             let pending_val = core::ptr::read_volatile(pending_ptr);
 
             if pending_val & (1u64 << bit_idx) != 0 {
