@@ -1,14 +1,53 @@
-- We are writing a Xen PV64 guest in Rust for learning purposes.
-  - We are considering PV64 only
-- https://xenbits.xen.org/docs/xtf/index.html
+# Xenos: a PV guest written in Rust
 
-## ELF Notes + assembly entry point
+The goal is to learn Xen internals by writing a PV/PVH guest kernel in Rust: start_info, hypercall page, XenStore, blkfront.
+
+## Current status and next steps
+- ~~panic through console~~
+- ~~read console input ring~~
+- ~~handle event channel instead of polling inputs~~
+- read/write info from xenstore
+- play with a disk
+  - read from Xenstore to discover what block devices dom0 is offering to us
+  - setup grant table entry and a shared ring (blkif protocol)
+  - setup an event channel
+  - do I/O requests on the ring
+- Switch to PVH guest: native CPU, hvm_start_info, E820 memory map
+
+## Run PV guest
+- You need to copy the config file to Dom0
+- From Dom0:
+```sh
+# xl create -p xen-pv64.cfg
+Parsing config from xen-pv64.cfg
+# -> from another terminal you can open a console: xl console xen-pv64
+# xl unpause xen-pv64
+```
+- You should see the message on the console.
+```
+[21:43 xcp-gtn-ip14 ~]# xl console xen-pv64
+xenos: PV guest started
+xenos: memory 64 MiB
+xenos: console evtchn=2 store evtchn=1
+xenos: console self-test: enter something (blocking wait)...
+xenos: console self-test: read 6 bytes
+xenos: console self-test: Hello
+xenos: entering event loop
+xenos: waiting for console input (5s timeout)
+Sailor!
+Got: Sailor!
+xenos: debug: unknown_port=0
+xenos: powering off
+```
+
+## Notes
+### ELF Notes + assembly entry point
 
 - When Xen loads the ELF it reads a `.note.Xen` section to understand what kind of guest
   this is. For PV64 we will need 7 notes.
 - Then it jumps to `_elf_start` with `%rsi =` pointer to a `start_info` struct.
 
-### ELF note format
+#### ELF note format
 
 - Each note in the `.note` section has this layout:
 ```
@@ -19,7 +58,7 @@
 [desc]
 ```
 
-### Expected
+#### Expected
 
 - `_elf_start`: Entry point, first byte of the binary
 - `kernel_main`: Our Rust function entry point
@@ -67,8 +106,7 @@ Displaying notes found in: .note
    description data: 79 65 73 00
 ```
 
-
-## Print hello
+### Print hello
 - `HYPERVISOR_console_io`: print "Hello"
 - Xen filled the `hypercall_page` with 128 stubs. Each stub is 32 bytes: it moves the
 hypercall number into `eax` and executes `syscall`. To invoke hypercall N we need
@@ -85,7 +123,7 @@ to do: `call hypercall_page + (N * 32)`
   - rsi = byte length
   - rdx = pointer to the string
 
-## Notes
+### Misc
 
 - When booting using pygrub or `kernel=` dom0 loads the binary, hands it to Xen. It requires
 PV or PVH guest (no qemu).
@@ -103,41 +141,3 @@ HVM.
   - `hvm_start_info` at boot contains E820 map
   - Hypercalls are made via `VMCALL` (Intel) / `VMMCALL` (AMD) directly (no hypercall page)
   - Xenstore location comes from a `HVMOP_get_param` hypercall (not from start struct like PV)
-
-## Run PV guest
-- You need to copy the config file to Dom0
-- From Dom0:
-```sh
-# xl create -p xen-pv64.cfg
-Parsing config from xen-pv64.cfg
-# -> from another terminal you can open a console: xl console xen-pv64
-# xl unpause xen-pv64
-```
-- You should see the message on the console.
-```
-[21:43 xcp-gtn-ip14 ~]# xl console xen-pv64
-xenos: PV guest started
-xenos: memory 64 MiB
-xenos: console evtchn=2 store evtchn=1
-xenos: console self-test: enter something (blocking wait)...
-xenos: console self-test: read 6 bytes
-xenos: console self-test: Hello
-xenos: entering event loop
-xenos: waiting for console input (5s timeout)
-Sailor!
-Got: Sailor!
-xenos: debug: unknown_port=0
-xenos: powering off
-```
-
-## Next steps
-- ~~panic through console~~
-- ~~read console input ring~~
-- ~~handle event channel instead of polling inputs~~
-- read/write info from xenstore
-- play with a disk
-  - read from Xenstore to discover what block devices dom0 is offering to us
-  - setup grant table entry and a shared ring (blkif protocol)
-  - setup an event channel
-  - do I/O requests on the ring
-- Switch to PVH guest: native CPU, hvm_start_info, E820 memory map
