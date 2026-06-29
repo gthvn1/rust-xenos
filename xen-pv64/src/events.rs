@@ -85,7 +85,6 @@ static mut SHARED_INFO: InfoPage = InfoPage([0; 4096]);
 // So keep a pointer to acces its fields
 static mut SHI_PTR: *mut SharedInfo = &raw mut SHARED_INFO as *mut SharedInfo;
 
-#[allow(dead_code)]
 pub enum Event {
     Port(u32), // fired port number
     Timeout,
@@ -102,41 +101,8 @@ pub fn init(shared_info_maddr: u64) {
     }
 }
 
-// Port goes from 0 to 4095: evtchn_mask is 512 bytes so 4096 bits
-//
-// Clearing a bit: for port N in a [u64; 64] bitmap:
-//  - word index = port / 64
-//  - bit index = port % 64
-//  - clear mask = !(1u64 << bit)
-//
-// evtchn_mask bit = 1 => masked (events blocked)
-// evtchn_mask bit = 0 => unmasked (delivered)
-//
-//pub fn unmask_port(port: u32) {
-//    let idx = (port / 64) as usize;
-//    let bit = (port % 64) as usize;
-//
-//    unsafe {
-//        let ptr = &raw mut (*SHI_PTR).evtchn_mask[idx];
-//        let val = core::ptr::read_volatile(ptr);
-//        core::ptr::write_volatile(ptr, val & !(1u64 << bit));
-//    }
-//}
-//
-//pub fn mask_port(port: u32) {
-//    let idx = (port / 64) as usize;
-//    let bit = (port % 64) as usize;
-//
-//    unsafe {
-//        let ptr = &raw mut (*SHI_PTR).evtchn_mask[idx];
-//        let val = core::ptr::read_volatile(ptr);
-//        core::ptr::write_volatile(ptr, val | (1u64 << bit));
-//    }
-//}
-
 // We want to use HYPERVISOR_sched_op
 // -> We will use SCHEDOP_poll
-#[allow(dead_code)]
 #[repr(C)]
 struct SchedPoll {
     ports: *const u32, // pointer to array of port numbers to watch
