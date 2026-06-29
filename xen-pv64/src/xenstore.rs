@@ -1,6 +1,6 @@
 use crate::hypercall::{Hypercall, hypercall3};
 
-// RTFS
+// RTFS: https://xenbits.xen.org/gitweb/?p=xen.git;a=tree
 // - xen/include/public/io/xs_wire.h
 // - docs/misc/xenstore.txt
 // - docs/misc/xenstore-ring.txt
