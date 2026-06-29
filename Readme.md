@@ -126,7 +126,8 @@ hello
 ## Next steps
 - ~~panic through console~~
 - ~~read console input ring~~
-- handle event channel instead of polling inputs
+- ~~handle event channel instead of polling inputs~~
+- read/write info from xenstore
 - play with a disk
   - read from Xenstore to discover what block devices dom0 is offering to us
   - setup grant table entry and a shared ring (blkif protocol)
