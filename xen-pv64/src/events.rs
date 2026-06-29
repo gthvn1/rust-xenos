@@ -168,10 +168,6 @@ impl EventPoller {
         };
 
         unsafe {
-            // TODO: manage several ports, currently we know that we have one port only and
-            // it is set. We should iterate all ports.
-            let port = self.ports[0];
-
             // Clear upcall_pending BEFORE calling SCHEDOP_poll so that if a new
             // event arrives between the clear and the hypercall, Xen will re-set
             // it and the poll returns immediately instead of blocking forever.
@@ -183,19 +179,21 @@ impl EventPoller {
                 &poll as *const _ as usize,
             );
 
-            // With a masked port, Xen sets evtchn_pending but does NOT set
-            // evtchn_pending_sel. Check evtchn_pending directly for our port.
-            let word_idx = (port / 64) as usize;
-            let bit_idx = (port % 64) as usize;
-            let pending_ptr = &raw mut (*SHI_PTR).evtchn_pending[word_idx];
-            let pending_val = core::ptr::read_volatile(pending_ptr);
+            for &port in self.ports[0..self.next].iter() {
+                // With a masked port, Xen sets evtchn_pending but does NOT set
+                // evtchn_pending_sel. Check evtchn_pending directly for our port.
+                let word_idx = (port / 64) as usize;
+                let bit_idx = (port % 64) as usize;
+                let pending_ptr = &raw mut (*SHI_PTR).evtchn_pending[word_idx];
+                let pending_val = core::ptr::read_volatile(pending_ptr);
 
-            if pending_val & (1u64 << bit_idx) != 0 {
-                core::ptr::write_volatile(pending_ptr, pending_val & !(1u64 << bit_idx));
-                Event::Port(port)
-            } else {
-                Event::Timeout
+                if pending_val & (1u64 << bit_idx) != 0 {
+                    core::ptr::write_volatile(pending_ptr, pending_val & !(1u64 << bit_idx));
+                    return Event::Port(port);
+                }
             }
+
+            Event::Timeout
         }
     }
 }
