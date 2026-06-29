@@ -98,9 +98,9 @@ impl core::fmt::Write for PvConsoleWriter {
 //   - out_prod = 2
 //   -> Sends event (EVTCHNOP_send) -> wakes xenconsoled
 // ...
-// and so on
-// the indice grow forever but we use `& (2048 -1)` to artificially wrap
+// and so on...
 //
+// Indices grow forever but we use `& (2048 -1)` to artificially wrap
 fn pv_console_write(s: &str) {
     let cons = &raw mut CONSOLE_RING as *mut XenConsInterface;
     let port = unsafe { CONSOLE_EVTCHN };
@@ -135,7 +135,7 @@ fn pv_console_write(s: &str) {
 }
 
 // Note: String are not available in no_std because it needs heap allocator.
-// Use a fixed-suze stack buffer instead.
+// Use a fixed-size stack buffer instead.
 pub fn pv_console_read_line(buf: &mut [u8]) -> usize {
     let mut idx = 0;
     while idx < buf.len() {
