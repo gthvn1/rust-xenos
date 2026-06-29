@@ -134,8 +134,22 @@ impl EventPoller {
         }
     }
 
-    pub fn _remove_port(&mut self, _port: u32) -> Result<(), ()> {
-        todo!()
+    #[allow(dead_code)]
+    pub fn remove_port(&mut self, port: u32) -> Result<(), ()> {
+        // First we need to find where it is located and if we find it we swap
+        // with the last one (it it is not already the last one).
+        for idx in 0..self.next {
+            if self.ports[idx] == port {
+                if idx != self.next - 1 {
+                    // It is not the last item so just permut with last item
+                    self.ports[idx] = self.ports[self.next - 1];
+                }
+                self.next -= 1;
+                return Ok(());
+            }
+        }
+
+        Err(())
     }
 
     pub fn wait_event(&self) -> Event {
