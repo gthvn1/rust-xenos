@@ -14,7 +14,7 @@ use crate::events::{Event, EventPoller};
 core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
-static mut START_INFO_PTR: u64 = 0; // Set by reading %rsi from boot
+static mut START_INFO_PTR: u64 = 0; // Set by reading %rsi from boot before calling kernel_main
 
 // boot_stack doesn't need 4K alignment
 #[unsafe(no_mangle)]
@@ -65,25 +65,25 @@ pub extern "C" fn kernel_main() -> ! {
     let console_mfn = unsafe { (*start_info()).console_mfn };
     let console_evtchn = unsafe { (*start_info()).console_evtchn };
 
+    // Enable events for console events
     events::init(shared_info_maddr);
-    //events::unmask_port(console_evtchn);
+    let mut event = EventPoller::new();
+    event.add_port(console_evtchn).unwrap();
 
     // Init pv console is only required for PvConsoleWriter
     console::init_pv_console(console_mfn, console_evtchn);
 
-    // See the message in panic if you don't see the message in xl dmesg.
     let _ = write!(ConsoleWriter, "Hello via HYPERVISOR_console_io\r\n");
-
     let _ = write!(PvConsoleWriter, "Hello via PV console!\r\n");
-    //let _ = write!(PvConsoleWriter, "Please enter something: ");
+    let _ = write!(PvConsoleWriter, "Please enter something: ");
 
     // Read something from pv console
-    //let mut buf = [0u8; 64];
-    //let bytes_read = console::pv_console_read_line(&mut buf);
+    let mut buf = [0u8; 64];
+    let bytes_read = console::pv_console_read_line(&mut buf);
 
-    //let _ = write!(PvConsoleWriter, "\r\nwe read {} bytes\r\n", bytes_read);
-    //let input = core::str::from_utf8(&buf[0..bytes_read]).unwrap_or("???");
-    //let _ = write!(PvConsoleWriter, "{}\r\n", input);
+    let _ = write!(PvConsoleWriter, "\r\nwe read {} bytes\r\n", bytes_read);
+    let input = core::str::from_utf8(&buf[0..bytes_read]).unwrap_or("???");
+    let _ = write!(PvConsoleWriter, "{}\r\n", input);
 
     let _ = write!(PvConsoleWriter, "\r\nEnter wait loop\r\n");
 
@@ -92,9 +92,6 @@ pub extern "C" fn kernel_main() -> ! {
     let mut done = false;
     let mut spurious_count = 0u32;
     let mut unknown_port_count = 0u32;
-
-    let mut event = EventPoller::new();
-    event.add_port(console_evtchn).unwrap();
 
     while !done {
         match event.wait_event() {

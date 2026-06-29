@@ -82,7 +82,7 @@ struct InfoPage([u8; 4096]);
 
 // SHARED_INFO page is just a raw byte array wrapper
 static mut SHARED_INFO: InfoPage = InfoPage([0; 4096]);
-// So keep a pointer to acces its field
+// So keep a pointer to acces its fields
 static mut SHI_PTR: *mut SharedInfo = &raw mut SHARED_INFO as *mut SharedInfo;
 
 #[allow(dead_code)]
@@ -92,7 +92,7 @@ pub enum Event {
     Spurious(u64), // pending_sel value for debugging
 }
 
-// We need to maps the page in the page table
+// We need to map the page in our page table
 pub fn init(shared_info_maddr: u64) {
     let virt = &raw const SHARED_INFO as *const _ as usize;
     let pte: usize = (shared_info_maddr as usize) | 0x3; /* P | RW */
