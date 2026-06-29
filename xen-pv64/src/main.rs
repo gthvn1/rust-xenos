@@ -4,6 +4,7 @@
 mod console;
 mod events;
 mod hypercall;
+mod xenstore;
 
 use console::{ConsoleWriter, PvConsoleWriter as PCW};
 use core::fmt::Write;
@@ -63,20 +64,28 @@ fn start_info() -> *const StartInfo {
 pub extern "C" fn kernel_main() -> ! {
     let shared_info_maddr = unsafe { (*start_info()).shared_info };
     let console_mfn = unsafe { (*start_info()).console_mfn };
+    let xs_mfn = unsafe { (*start_info()).store_mfn };
     let console_evtchn = unsafe { (*start_info()).console_evtchn };
+    let xs_evtchn = unsafe { (*start_info()).store_evtchn };
 
-    // Enable events for console events
-    events::init(shared_info_maddr);
-    let mut event = EventPoller::new();
-    event.add_port(console_evtchn).unwrap();
+    // Console writer probably won't work if Xen is not compiled with the correct
+    // flag. But let it there as an example of how to do it. In case of debug it could
+    // be usefull to use it for early message.
+    let _ = write!(ConsoleWriter, "Hello via HYPERVISOR_console_io\r\n");
 
     // Init pv console is only required for PvConsoleWriter
     console::init_pv_console(console_mfn, console_evtchn);
+    // Init xenstore
+    xenstore::init(xs_mfn);
+    // Enable events for console events
+    events::init(shared_info_maddr);
 
-    // Console writer probably won't work if Xen is not compiled with the correct
-    // flag. But let it there as an example of how to do it.
-    let _ = write!(ConsoleWriter, "Hello via HYPERVISOR_console_io\r\n");
+    // Setup events
+    let mut event = EventPoller::new();
+    event.add_port(xs_evtchn).unwrap();
+    event.add_port(console_evtchn).unwrap();
 
+    // Ready to print some stuff
     let _ = write!(PCW, "xenos: PV guest started\r\n");
     let _ = write!(
         PCW,
